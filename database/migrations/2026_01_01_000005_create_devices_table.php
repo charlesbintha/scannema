@@ -14,7 +14,7 @@ return new class extends Migration
         Schema::create('devices', function (Blueprint $table) {
             $table->id();
             $table->foreignId('checkpoint_id')->constrained('checkpoints')->onDelete('cascade');
-            $table->foreignId('user_id')->constrained('users')->onDelete('set null')->nullable();
+            $table->foreignId('user_id')->nullable()->constrained('users')->onDelete('set null');
             $table->string('device_id', 255)->unique();
             $table->string('device_name', 255)->nullable();
             $table->string('device_type', 100)->nullable();
