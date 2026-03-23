@@ -6,7 +6,6 @@ use App\Models\Invitation;
 use App\Models\ScanLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Carbon;
 
 class ScanController extends Controller
 {
@@ -21,38 +20,32 @@ class ScanController extends Controller
                 'qrPayload' => 'required|string',
                 'checkpointId' => 'nullable|string',
                 'deviceId' => 'nullable|string',
-                'latencyMs' => 'nullable|integer',
             ]);
 
-            $qrPayload = $request->input('qrPayload');
+            $qrPayload = trim($request->input('qrPayload'));
             $checkpointId = $request->input('checkpointId');
             $deviceId = $request->input('deviceId');
-            $latencyMs = $request->input('latencyMs');
             $userId = $request->header('X-User-Id');
 
-            if (!$userId) {
-                return response()->json([
-                    'ok' => false,
-                    'error' => 'Non authentifié',
-                ], 401);
-            }
-
             // Use transaction with row lock
-            $result = DB::transaction(function () use ($eventId, $qrPayload, $userId, $checkpointId, $deviceId, $latencyMs) {
-                // SELECT ... FOR UPDATE on invitations table
+            $result = DB::transaction(function () use ($eventId, $qrPayload, $userId, $checkpointId, $deviceId) {
+                // Try to find by qr_payload first, then by code (ticket code)
                 $invitation = Invitation::where('event_id', $eventId)
-                    ->where('qr_payload', $qrPayload)
+                    ->where(function ($query) use ($qrPayload) {
+                        $query->where('qr_payload', $qrPayload)
+                              ->orWhere('code', $qrPayload);
+                    })
                     ->lockForUpdate()
                     ->first();
 
                 // No matching ticket
                 if (!$invitation) {
-                    $this->logScan($eventId, $qrPayload, null, 'INVALID', $userId, $checkpointId, $deviceId, $latencyMs);
+                    $this->logScan($eventId, $qrPayload, null, 'INVALID', $userId, $checkpointId, $deviceId);
                     return [
                         'status' => 404,
                         'ok' => false,
                         'result' => 'INVALID',
-                        'message' => 'Ticket non trouvé',
+                        'message' => 'Ticket non trouve',
                         'ticket' => null,
                     ];
                 }
@@ -60,25 +53,26 @@ class ScanController extends Controller
                 // Check status
                 $status = $invitation->status;
 
-                // BLOCKED or CANCELLED
+                // BLOCKED
                 if ($status === 'BLOCKED') {
-                    $this->logScan($eventId, $qrPayload, $invitation->id, 'BLOCKED', $userId, $checkpointId, $deviceId, $latencyMs);
+                    $this->logScan($eventId, $qrPayload, $invitation->id, 'BLOCKED', $userId, $checkpointId, $deviceId);
                     return [
                         'status' => 403,
                         'ok' => false,
                         'result' => 'BLOCKED',
-                        'message' => 'Ce ticket a été bloqué',
+                        'message' => 'Ce ticket a ete bloque',
                         'ticket' => $this->formatTicket($invitation),
                     ];
                 }
 
+                // CANCELLED
                 if ($status === 'CANCELLED') {
-                    $this->logScan($eventId, $qrPayload, $invitation->id, 'CANCELLED', $userId, $checkpointId, $deviceId, $latencyMs);
+                    $this->logScan($eventId, $qrPayload, $invitation->id, 'CANCELLED', $userId, $checkpointId, $deviceId);
                     return [
                         'status' => 403,
                         'ok' => false,
                         'result' => 'CANCELLED',
-                        'message' => 'Ce ticket a été annulé',
+                        'message' => 'Ce ticket a ete annule',
                         'ticket' => $this->formatTicket($invitation),
                     ];
                 }
@@ -87,46 +81,45 @@ class ScanController extends Controller
                 if ($status === 'SCANNED') {
                     $lastScan = ScanLog::where('invitation_id', $invitation->id)
                         ->where('result', 'VALID')
-                        ->orderByDesc('scanned_at')
+                        ->orderByDesc('created_at')
                         ->first();
 
-                    $this->logScan($eventId, $qrPayload, $invitation->id, 'ALREADY_SCANNED', $userId, $checkpointId, $deviceId, $latencyMs);
+                    $this->logScan($eventId, $qrPayload, $invitation->id, 'ALREADY_SCANNED', $userId, $checkpointId, $deviceId);
 
                     return [
                         'status' => 200,
                         'ok' => true,
                         'result' => 'ALREADY_SCANNED',
-                        'message' => 'Ce ticket a déjà été scanné',
+                        'message' => 'Ce ticket a deja ete scanne',
                         'ticket' => $this->formatTicket($invitation),
                         'previousScan' => $lastScan ? [
-                            'scannedAt' => $lastScan->scanned_at->toIso8601String(),
+                            'scannedAt' => $lastScan->created_at->toIso8601String(),
                             'scannedBy' => $lastScan->user_id,
                             'checkpoint' => $lastScan->checkpoint_id,
                         ] : null,
                     ];
                 }
 
-                // NOT_SCANNED → mark as SCANNED
+                // NOT_SCANNED -> mark as SCANNED
                 if ($status === 'NOT_SCANNED') {
                     $invitation->update([
                         'status' => 'SCANNED',
-                        'scan_count' => ($invitation->scan_count ?? 0) + 1,
                         'scanned_at' => now(),
                     ]);
 
-                    $this->logScan($eventId, $qrPayload, $invitation->id, 'VALID', $userId, $checkpointId, $deviceId, $latencyMs);
+                    $this->logScan($eventId, $qrPayload, $invitation->id, 'VALID', $userId, $checkpointId, $deviceId);
 
                     return [
                         'status' => 200,
                         'ok' => true,
                         'result' => 'VALID',
-                        'message' => 'Ticket valide - entrée autorisée',
+                        'message' => 'Ticket valide - entree autorisee',
                         'ticket' => $this->formatTicket($invitation),
                     ];
                 }
 
                 // Unknown status
-                $this->logScan($eventId, $qrPayload, $invitation->id, 'INVALID', $userId, $checkpointId, $deviceId, $latencyMs);
+                $this->logScan($eventId, $qrPayload, $invitation->id, 'INVALID', $userId, $checkpointId, $deviceId);
                 return [
                     'status' => 400,
                     'ok' => false,
@@ -141,10 +134,11 @@ class ScanController extends Controller
 
             return response()->json($result, $httpStatus);
         } catch (\Exception $e) {
+            \Log::error('Scan verify error', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
             return response()->json([
                 'ok' => false,
                 'result' => 'ERROR',
-                'error' => 'Erreur lors de la vérification du ticket',
+                'error' => 'Erreur lors de la verification du ticket',
                 'message' => 'Une erreur s\'est produite lors du traitement',
             ], 500);
         }
@@ -153,9 +147,19 @@ class ScanController extends Controller
     /**
      * Log scan attempt to scan_logs table
      */
-    private function logScan($eventId, $qrPayload, $invitationId, $result, $userId, $checkpointId = null, $deviceId = null, $latencyMs = null)
+    private function logScan($eventId, $qrPayload, $invitationId, $result, $userId, $checkpointId = null, $deviceId = null)
     {
         try {
+            // invitation_id is NOT NULL in migration, skip logging for INVALID scans without invitation
+            if ($invitationId === null) {
+                \Log::info('Scan attempt without invitation', [
+                    'event_id' => $eventId,
+                    'qr_payload' => $qrPayload,
+                    'result' => $result,
+                ]);
+                return;
+            }
+
             ScanLog::create([
                 'event_id' => $eventId,
                 'invitation_id' => $invitationId,
@@ -164,12 +168,9 @@ class ScanController extends Controller
                 'result' => $result,
                 'checkpoint_id' => $checkpointId,
                 'device_id' => $deviceId,
-                'latency_ms' => $latencyMs,
-                'scanned_at' => now(),
-                'ip_address' => request()->ip(),
+                'device_ip' => request()->ip(),
             ]);
         } catch (\Exception $e) {
-            // Log but don't fail the main operation
             \Log::warning('Failed to log scan', ['error' => $e->getMessage()]);
         }
     }
@@ -185,12 +186,11 @@ class ScanController extends Controller
 
         return [
             'id' => $invitation->id,
-            'ticketNumber' => $invitation->ticket_number,
+            'ticketNumber' => $invitation->code,
             'qrPayload' => $invitation->qr_payload,
             'guestName' => $invitation->guest_name,
-            'phone' => $invitation->phone,
+            'phone' => $invitation->guest_phone,
             'status' => $invitation->status,
-            'scanCount' => $invitation->scan_count ?? 0,
             'scannedAt' => $invitation->scanned_at?->toIso8601String(),
         ];
     }

@@ -12,24 +12,18 @@ class ScanLog extends Model
     protected $fillable = [
         'event_id',
         'invitation_id',
-        'input_payload',
-        'result',
-        'checked_at',
-        'checker_user_id',
-        'checkpoint_id',
         'device_id',
-        'latency_ms',
-        'latitude',
-        'longitude',
-        'note',
+        'user_id',
+        'checkpoint_id',
+        'qr_payload',
+        'result',
+        'error_message',
+        'device_ip',
     ];
 
     protected $casts = [
-        'checked_at' => 'datetime',
-        'latency_ms' => 'integer',
-        'latitude' => 'float',
-        'longitude' => 'float',
         'created_at' => 'datetime',
+        'updated_at' => 'datetime',
     ];
 
     /**
@@ -51,9 +45,9 @@ class ScanLog extends Model
     /**
      * Get the user who performed the check.
      */
-    public function checkerUser(): BelongsTo
+    public function user(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'checker_user_id');
+        return $this->belongsTo(User::class, 'user_id');
     }
 
     /**

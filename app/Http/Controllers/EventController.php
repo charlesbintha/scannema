@@ -16,23 +16,16 @@ class EventController extends Controller
     public function index(Request $request)
     {
         try {
-            $events = Event::withCount(['invitations'])
-                ->with([
-                    'invitations' => function ($query) {
-                        $query->select(DB::raw('status, COUNT(*) as count'))
-                            ->groupBy('status');
-                    }
-                ])
-                ->orderByDesc('created_at')
-                ->get();
+            $events = Event::orderByDesc('created_at')->get();
 
             $eventsData = $events->map(function ($event) {
-                $invitations = $event->invitations;
+                $counts = Invitation::where('event_id', $event->id)
+                    ->select('status', DB::raw('COUNT(*) as count'))
+                    ->groupBy('status')
+                    ->get()
+                    ->keyBy('status');
 
-                $statusCounts = [];
-                foreach ($invitations as $inv) {
-                    $statusCounts[$inv->status] = $inv->count;
-                }
+                $total = Invitation::where('event_id', $event->id)->count();
 
                 return [
                     'id' => $event->id,
@@ -42,14 +35,13 @@ class EventController extends Controller
                     'endsAt' => $event->ends_at?->toIso8601String(),
                     'timezone' => $event->timezone,
                     'status' => $event->status,
-                    'location' => $event->location,
-                    'checkpoint' => $event->checkpoint,
+                    'expectedGuests' => $event->expected_guests,
                     'invitationCounts' => [
-                        'total' => $event->invitations_count,
-                        'notScanned' => $statusCounts['NOT_SCANNED'] ?? 0,
-                        'scanned' => $statusCounts['SCANNED'] ?? 0,
-                        'blocked' => $statusCounts['BLOCKED'] ?? 0,
-                        'cancelled' => $statusCounts['CANCELLED'] ?? 0,
+                        'total' => $total,
+                        'notScanned' => $counts->get('NOT_SCANNED')?->count ?? 0,
+                        'scanned' => $counts->get('SCANNED')?->count ?? 0,
+                        'blocked' => $counts->get('BLOCKED')?->count ?? 0,
+                        'cancelled' => $counts->get('CANCELLED')?->count ?? 0,
                     ],
                 ];
             });
@@ -59,9 +51,10 @@ class EventController extends Controller
                 'events' => $eventsData,
             ], 200);
         } catch (\Exception $e) {
+            \Log::error('Events index error', ['error' => $e->getMessage()]);
             return response()->json([
                 'ok' => false,
-                'error' => 'Erreur lors de la récupération des événements',
+                'error' => 'Erreur lors de la recuperation des evenements',
             ], 500);
         }
     }
@@ -73,18 +66,15 @@ class EventController extends Controller
     public function show(Request $request, $eventId)
     {
         try {
-            $event = Event::where('id', $eventId)
-                ->with(['invitations' => function ($query) {
-                    $query->select(DB::raw('status, COUNT(*) as count'))
-                        ->groupBy('status');
-                }])
-                ->firstOrFail();
+            $event = Event::findOrFail($eventId);
 
-            $invitations = $event->invitations;
-            $statusCounts = [];
-            foreach ($invitations as $inv) {
-                $statusCounts[$inv->status] = $inv->count;
-            }
+            $counts = Invitation::where('event_id', $event->id)
+                ->select('status', DB::raw('COUNT(*) as count'))
+                ->groupBy('status')
+                ->get()
+                ->keyBy('status');
+
+            $total = Invitation::where('event_id', $event->id)->count();
 
             return response()->json([
                 'ok' => true,
@@ -96,28 +86,28 @@ class EventController extends Controller
                     'endsAt' => $event->ends_at?->toIso8601String(),
                     'timezone' => $event->timezone,
                     'status' => $event->status,
-                    'location' => $event->location,
-                    'checkpoint' => $event->checkpoint,
+                    'expectedGuests' => $event->expected_guests,
                     'createdAt' => $event->created_at?->toIso8601String(),
                     'updatedAt' => $event->updated_at?->toIso8601String(),
                     'invitationCounts' => [
-                        'total' => $event->invitations_count ?? 0,
-                        'notScanned' => $statusCounts['NOT_SCANNED'] ?? 0,
-                        'scanned' => $statusCounts['SCANNED'] ?? 0,
-                        'blocked' => $statusCounts['BLOCKED'] ?? 0,
-                        'cancelled' => $statusCounts['CANCELLED'] ?? 0,
+                        'total' => $total,
+                        'notScanned' => $counts->get('NOT_SCANNED')?->count ?? 0,
+                        'scanned' => $counts->get('SCANNED')?->count ?? 0,
+                        'blocked' => $counts->get('BLOCKED')?->count ?? 0,
+                        'cancelled' => $counts->get('CANCELLED')?->count ?? 0,
                     ],
                 ],
             ], 200);
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return response()->json([
                 'ok' => false,
-                'error' => 'Événement non trouvé',
+                'error' => 'Evenement non trouve',
             ], 404);
         } catch (\Exception $e) {
+            \Log::error('Event show error', ['error' => $e->getMessage()]);
             return response()->json([
                 'ok' => false,
-                'error' => 'Erreur lors de la récupération de l\'événement',
+                'error' => 'Erreur lors de la recuperation de l\'evenement',
             ], 500);
         }
     }
@@ -132,23 +122,19 @@ class EventController extends Controller
             $request->validate([
                 'code' => 'required|string|unique:events,code',
                 'name' => 'required|string',
-                'startsAt' => 'required|date_format:Y-m-d\TH:i:s|date_format:Y-m-d\TH:i:sP',
-                'endsAt' => 'required|date_format:Y-m-d\TH:i:s|date_format:Y-m-d\TH:i:sP|after:startsAt',
+                'organizationId' => 'required|integer|exists:organizations,id',
                 'timezone' => 'nullable|string|timezone',
-                'status' => 'nullable|in:ACTIVE,ARCHIVED,CANCELLED',
-                'location' => 'nullable|string',
-                'checkpoint' => 'nullable|string',
+                'status' => 'nullable|in:DRAFT,LIVE,ENDED,CANCELLED',
             ]);
 
             $event = Event::create([
+                'organization_id' => $request->input('organizationId'),
                 'code' => $request->input('code'),
                 'name' => $request->input('name'),
                 'starts_at' => $request->input('startsAt'),
                 'ends_at' => $request->input('endsAt'),
-                'timezone' => $request->input('timezone', 'Europe/Paris'),
-                'status' => $request->input('status', 'ACTIVE'),
-                'location' => $request->input('location'),
-                'checkpoint' => $request->input('checkpoint'),
+                'timezone' => $request->input('timezone', 'UTC'),
+                'status' => $request->input('status', 'DRAFT'),
             ]);
 
             return response()->json([
@@ -157,25 +143,21 @@ class EventController extends Controller
                     'id' => $event->id,
                     'code' => $event->code,
                     'name' => $event->name,
-                    'startsAt' => $event->starts_at->toIso8601String(),
-                    'endsAt' => $event->ends_at->toIso8601String(),
-                    'timezone' => $event->timezone,
                     'status' => $event->status,
-                    'location' => $event->location,
-                    'checkpoint' => $event->checkpoint,
                     'createdAt' => $event->created_at->toIso8601String(),
                 ],
             ], 201);
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
                 'ok' => false,
-                'error' => 'Données invalides',
+                'error' => 'Donnees invalides',
                 'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
+            \Log::error('Event store error', ['error' => $e->getMessage()]);
             return response()->json([
                 'ok' => false,
-                'error' => 'Erreur lors de la création de l\'événement',
+                'error' => 'Erreur lors de la creation de l\'evenement',
             ], 500);
         }
     }

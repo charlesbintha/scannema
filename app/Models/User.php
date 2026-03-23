@@ -16,12 +16,13 @@ class User extends Model implements AuthenticatableContract
 
     protected $fillable = [
         'organization_id',
+        'name',
         'username',
-        'full_name',
         'email',
         'password_hash',
         'role',
         'is_active',
+        'last_login_at',
     ];
 
     protected $hidden = [
@@ -30,6 +31,7 @@ class User extends Model implements AuthenticatableContract
 
     protected $casts = [
         'is_active' => 'boolean',
+        'last_login_at' => 'datetime',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
     ];
@@ -55,14 +57,6 @@ class User extends Model implements AuthenticatableContract
      */
     public function scanLogs(): HasMany
     {
-        return $this->hasMany(ScanLog::class, 'checker_user_id');
-    }
-
-    /**
-     * Get all invitations scanned by this user.
-     */
-    public function scannedInvitations(): HasMany
-    {
-        return $this->hasMany(Invitation::class, 'scanned_by_user_id');
+        return $this->hasMany(ScanLog::class, 'user_id');
     }
 }

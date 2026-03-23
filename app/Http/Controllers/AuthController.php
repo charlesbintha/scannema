@@ -35,35 +35,33 @@ class AuthController extends Controller
             if (!$user && $username) {
                 $user = User::whereRaw('LOWER(username) = ?', [strtolower($username)])->first();
             }
+            // Also try email field as username
+            if (!$user && $email) {
+                $user = User::whereRaw('LOWER(username) = ?', [strtolower($email)])->first();
+            }
 
             // Fallback to environment variables
             if (!$user) {
-                $envEmail = config('app.mobile_login_email');
-                $envPassword = config('app.mobile_login_password');
-                $envFullName = config('app.mobile_login_full_name');
-                $envRole = config('app.mobile_login_role', 'CHECKER');
+                $envEmail = env('MOBILE_LOGIN_EMAIL');
+                $envPassword = env('MOBILE_LOGIN_PASSWORD');
+                $envFullName = env('MOBILE_LOGIN_FULL_NAME', 'Utilisateur');
+                $envRole = env('MOBILE_LOGIN_ROLE', 'CHECKER');
 
                 if ($envEmail && $envPassword) {
                     $lookupEmail = $email ?: $username;
 
-                    // Match email or username (email part before @)
-                    $emailMatch = strtolower($lookupEmail) === strtolower($envEmail);
-                    $usernameMatch = strtolower($lookupEmail) === strtolower(explode('@', $envEmail)[0]);
+                    if ($lookupEmail) {
+                        $emailMatch = strtolower($lookupEmail) === strtolower($envEmail);
+                        $usernameMatch = strtolower($lookupEmail) === strtolower(explode('@', $envEmail)[0]);
 
-                    if (($emailMatch || $usernameMatch) && $password === $envPassword) {
-                        // Use env fallback user
-                        $user = new User([
-                            'id' => 'mobile-env-user',
-                            'email' => $envEmail,
-                            'full_name' => $envFullName,
-                            'role' => $envRole,
-                            'password_hash' => $envPassword,
-                        ]);
+                        if (($emailMatch || $usernameMatch) && $password === $envPassword) {
+                            return $this->buildLoginResponse('env-user', $envFullName, $envEmail, $envRole);
+                        }
                     }
                 }
             }
 
-            // User not found or password invalid
+            // User not found
             if (!$user) {
                 return response()->json([
                     'ok' => false,
@@ -72,57 +70,21 @@ class AuthController extends Controller
             }
 
             // Verify password
-            $isEnvUser = !$user->getKey() || $user->id === 'mobile-env-user';
-            if (!$isEnvUser && !Hash::check($password, $user->password_hash)) {
+            if (!Hash::check($password, $user->password_hash)) {
                 return response()->json([
                     'ok' => false,
                     'error' => 'Identifiants invalides',
                 ], 401);
             }
 
-            // Generate access token
-            $timestamp = now()->timestamp;
-            $userId = $user->id ?? 'mobile-env-user';
-            $accessToken = "scn-{$timestamp}-{$userId}";
-
-            // Fetch linked events
-            $linkedEventIds = config('app.mobile_linked_event_ids');
-            $query = Event::query();
-
-            if ($linkedEventIds) {
-                $ids = explode(',', $linkedEventIds);
-                $query->whereIn('id', $ids);
-            }
-
-            $events = $query->get();
-            $defaultLocation = config('app.mobile_default_location', 'Lieu non defini');
-            $defaultCheckpoint = config('app.mobile_default_checkpoint', 'Entree Principale');
-
-            $linkedEvents = $events->map(function ($event) use ($defaultLocation, $defaultCheckpoint) {
-                return [
-                    'id' => $event->id,
-                    'code' => $event->code,
-                    'name' => $event->name,
-                    'dateLabel' => $this->formatDateInFrench($event->starts_at),
-                    'location' => $event->location ?? $defaultLocation,
-                    'checkpoint' => $event->checkpoint ?? $defaultCheckpoint,
-                ];
-            });
-
-            return response()->json([
-                'ok' => true,
-                'session' => [
-                    'accessToken' => $accessToken,
-                    'user' => [
-                        'id' => $userId,
-                        'fullName' => $user->full_name ?? $user->name ?? 'Utilisateur',
-                        'email' => $user->email,
-                        'role' => $user->role ?? 'CHECKER',
-                    ],
-                    'linkedEvents' => $linkedEvents->values(),
-                ],
-            ], 200);
+            return $this->buildLoginResponse(
+                $user->id,
+                $user->name,
+                $user->email,
+                $user->role ?? 'CHECKER'
+            );
         } catch (\Exception $e) {
+            \Log::error('Login error', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
             return response()->json([
                 'ok' => false,
                 'error' => 'Erreur lors de l\'authentification',
@@ -131,7 +93,46 @@ class AuthController extends Controller
     }
 
     /**
-     * Format date in French format (e.g., "samedi 18 avril 2026")
+     * Build the login response with user session and linked events
+     */
+    private function buildLoginResponse($userId, $name, $email, $role)
+    {
+        $timestamp = now()->timestamp;
+        $accessToken = "scn-{$timestamp}-{$userId}";
+
+        // Fetch all events (for MVP, all events are linked)
+        $events = Event::all();
+        $defaultLocation = env('MOBILE_DEFAULT_LOCATION', 'Lieu non defini');
+        $defaultCheckpoint = env('MOBILE_DEFAULT_CHECKPOINT', 'Entree Principale');
+
+        $linkedEvents = $events->map(function ($event) use ($defaultLocation, $defaultCheckpoint) {
+            return [
+                'id' => $event->id,
+                'code' => $event->code,
+                'name' => $event->name,
+                'dateLabel' => $this->formatDateInFrench($event->starts_at),
+                'location' => $defaultLocation,
+                'checkpoint' => $defaultCheckpoint,
+            ];
+        });
+
+        return response()->json([
+            'ok' => true,
+            'session' => [
+                'accessToken' => $accessToken,
+                'user' => [
+                    'id' => $userId,
+                    'fullName' => $name,
+                    'email' => $email,
+                    'role' => $role,
+                ],
+                'linkedEvents' => $linkedEvents->values(),
+            ],
+        ], 200);
+    }
+
+    /**
+     * Format date in French format
      */
     private function formatDateInFrench($date)
     {
@@ -143,8 +144,8 @@ class AuthController extends Controller
 
         $days = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
         $months = [
-            'janvier', 'février', 'mars', 'avril', 'mai', 'juin',
-            'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'
+            'janvier', 'fevrier', 'mars', 'avril', 'mai', 'juin',
+            'juillet', 'aout', 'septembre', 'octobre', 'novembre', 'decembre'
         ];
 
         $dayName = $days[$carbon->dayOfWeek];

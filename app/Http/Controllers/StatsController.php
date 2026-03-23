@@ -35,8 +35,8 @@ class StatsController extends Controller
 
             // Get last 20 scan logs
             $recentScans = ScanLog::where('event_id', $eventId)
-                ->with(['invitation:id,ticket_number,guest_name', 'user:id,full_name,email'])
-                ->orderByDesc('scanned_at')
+                ->with(['invitation:id,code,guest_name', 'user:id,name,email'])
+                ->orderByDesc('created_at')
                 ->limit(20)
                 ->get()
                 ->map(function ($log) {
@@ -44,13 +44,12 @@ class StatsController extends Controller
                         'id' => $log->id,
                         'result' => $log->result,
                         'message' => $this->getResultMessage($log->result),
-                        'scannedAt' => $log->scanned_at->toIso8601String(),
-                        'ticketNumber' => $log->invitation?->ticket_number,
+                        'scannedAt' => $log->created_at->toIso8601String(),
+                        'ticketNumber' => $log->invitation?->code,
                         'guestName' => $log->invitation?->guest_name,
-                        'scannedBy' => $log->user?->full_name ?? $log->user_id,
+                        'scannedBy' => $log->user?->name ?? $log->user_id,
                         'checkpoint' => $log->checkpoint_id,
                         'device' => $log->device_id,
-                        'latencyMs' => $log->latency_ms,
                     ];
                 });
 
@@ -68,12 +67,13 @@ class StatsController extends Controller
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return response()->json([
                 'ok' => false,
-                'error' => 'Événement non trouvé',
+                'error' => 'Evenement non trouve',
             ], 404);
         } catch (\Exception $e) {
+            \Log::error('Stats error', ['error' => $e->getMessage()]);
             return response()->json([
                 'ok' => false,
-                'error' => 'Erreur lors de la récupération des statistiques',
+                'error' => 'Erreur lors de la recuperation des statistiques',
             ], 500);
         }
     }
@@ -96,10 +96,10 @@ class StatsController extends Controller
 
             $query = ScanLog::where('event_id', $eventId)
                 ->with([
-                    'invitation:id,ticket_number,guest_name,status',
-                    'user:id,full_name,email,role'
+                    'invitation:id,code,guest_name,status',
+                    'user:id,name,email,role'
                 ])
-                ->orderByDesc('scanned_at');
+                ->orderByDesc('created_at');
 
             // Filter by result if provided
             if ($request->has('result')) {
@@ -114,24 +114,23 @@ class StatsController extends Controller
                     'id' => $log->id,
                     'result' => $log->result,
                     'message' => $this->getResultMessage($log->result),
-                    'scannedAt' => $log->scanned_at->toIso8601String(),
+                    'scannedAt' => $log->created_at->toIso8601String(),
                     'qrPayload' => $log->qr_payload,
                     'ticket' => $log->invitation ? [
                         'id' => $log->invitation->id,
-                        'ticketNumber' => $log->invitation->ticket_number,
+                        'ticketNumber' => $log->invitation->code,
                         'guestName' => $log->invitation->guest_name,
                         'status' => $log->invitation->status,
                     ] : null,
                     'scannedBy' => $log->user ? [
                         'id' => $log->user->id,
-                        'fullName' => $log->user->full_name,
+                        'name' => $log->user->name,
                         'email' => $log->user->email,
                         'role' => $log->user->role,
                     ] : null,
                     'checkpoint' => $log->checkpoint_id,
                     'device' => $log->device_id,
-                    'latencyMs' => $log->latency_ms,
-                    'ipAddress' => $log->ip_address,
+                    'ipAddress' => $log->device_ip,
                 ];
             });
 
@@ -150,18 +149,19 @@ class StatsController extends Controller
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return response()->json([
                 'ok' => false,
-                'error' => 'Événement non trouvé',
+                'error' => 'Evenement non trouve',
             ], 404);
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
                 'ok' => false,
-                'error' => 'Paramètres invalides',
+                'error' => 'Parametres invalides',
                 'errors' => $e->errors(),
             ], 422);
         } catch (\Exception $e) {
+            \Log::error('Scan logs error', ['error' => $e->getMessage()]);
             return response()->json([
                 'ok' => false,
-                'error' => 'Erreur lors de la récupération des journaux de scan',
+                'error' => 'Erreur lors de la recuperation des journaux de scan',
             ], 500);
         }
     }
@@ -173,10 +173,10 @@ class StatsController extends Controller
     {
         $messages = [
             'VALID' => 'Ticket valide',
-            'INVALID' => 'Ticket non trouvé',
-            'ALREADY_SCANNED' => 'Déjà scanné',
-            'BLOCKED' => 'Ticket bloqué',
-            'CANCELLED' => 'Ticket annulé',
+            'INVALID' => 'Ticket non trouve',
+            'ALREADY_SCANNED' => 'Deja scanne',
+            'BLOCKED' => 'Ticket bloque',
+            'CANCELLED' => 'Ticket annule',
             'ERROR' => 'Erreur lors du scan',
         ];
 
