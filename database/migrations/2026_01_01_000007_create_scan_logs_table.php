@@ -15,9 +15,9 @@ return new class extends Migration
             $table->id();
             $table->foreignId('event_id')->constrained('events')->onDelete('cascade');
             $table->foreignId('invitation_id')->constrained('invitations')->onDelete('cascade');
-            $table->foreignId('device_id')->constrained('devices')->onDelete('set null')->nullable();
-            $table->foreignId('user_id')->constrained('users')->onDelete('set null')->nullable();
-            $table->foreignId('checkpoint_id')->constrained('checkpoints')->onDelete('set null')->nullable();
+            $table->foreignId('device_id')->nullable()->constrained('devices')->onDelete('set null');
+            $table->foreignId('user_id')->nullable()->constrained('users')->onDelete('set null');
+            $table->foreignId('checkpoint_id')->nullable()->constrained('checkpoints')->onDelete('set null');
             $table->string('qr_payload', 255);
             $table->enum('result', ['VALID', 'ALREADY_SCANNED', 'INVALID', 'BLOCKED', 'CANCELLED', 'ERROR'])->default('ERROR');
             $table->string('error_message', 255)->nullable();
