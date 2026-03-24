@@ -22,7 +22,7 @@ class DatabaseSeeder extends Seeder
             'updated_at' => now(),
         ]);
 
-        // Create User
+        // Create Users
         DB::table('users')->insert([
             'organization_id' => $organization,
             'name' => 'Charles Bintha',
@@ -30,6 +30,18 @@ class DatabaseSeeder extends Seeder
             'username' => 'charlesbintha',
             'password_hash' => Hash::make('password'),
             'role' => 'SUPER_ADMIN',
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('users')->insert([
+            'organization_id' => $organization,
+            'name' => 'Agent Scanner',
+            'email' => 'scanner@scannema.com',
+            'username' => 'scanner',
+            'password_hash' => Hash::make('scanner2026'),
+            'role' => 'CHECKER',
             'is_active' => true,
             'created_at' => now(),
             'updated_at' => now(),
