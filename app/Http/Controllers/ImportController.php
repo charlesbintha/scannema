@@ -85,7 +85,8 @@ class ImportController extends Controller
                                 // Update other fields but keep status
                                 $existingTicket->update([
                                     'guest_name' => $data['guest_name'] ?? $existingTicket->guest_name,
-                                    'phone' => $data['phone'] ?? $existingTicket->phone,
+                                    'guest_phone' => $data['phone'] ?? $existingTicket->guest_phone,
+                                    'code' => $data['code'],
                                     'qr_payload' => $data['qr_payload'] ?? $existingTicket->qr_payload,
                                 ]);
                                 $updated++;
@@ -100,11 +101,12 @@ class ImportController extends Controller
                             Invitation::create([
                                 'event_id' => $eventId,
                                 'ticket_number' => $data['ticket_number'],
+                                'code' => $data['code'],
                                 'qr_payload' => $data['qr_payload'],
                                 'guest_name' => $data['guest_name'],
-                                'phone' => $data['phone'],
+                                'guest_phone' => $data['phone'],
                                 'status' => 'NOT_SCANNED',
-                                'scan_count' => 0,
+                                'payment_status' => 'UNPAID',
                             ]);
                             $created++;
                         }
@@ -197,7 +199,7 @@ class ImportController extends Controller
         $mapping = [];
 
         $columnAliases = [
-            'ticket_number' => ['code', '#code', 'ticket_number', 'numero_ticket', 'num_ticket', 'n_ticket'],
+            'ticket_number' => ['code', 'ticket_number', 'numero_ticket', 'num_ticket', 'n_ticket'],
             'qr_payload' => ['#code', 'qr_payload', 'qr_code', 'code_qr', 'qr', 'payload'],
             'guest_name' => ['guest_name', 'nom', 'name', 'participant_name', 'nom_participant'],
             'phone' => ['phone', 'telephone', 'téléphone', 'tel', 'phone_number', 'numero_telephone'],
@@ -208,7 +210,7 @@ class ImportController extends Controller
 
             foreach ($columnAliases as $column => $aliases) {
                 foreach ($aliases as $alias) {
-                    if (strtolower($alias) === $normalizedHeader || strpos($normalizedHeader, strtolower($alias)) === 0) {
+                    if (strtolower($alias) === $normalizedHeader) {
                         $mapping[$column] = $index;
                         break 2;
                     }
@@ -240,6 +242,11 @@ class ImportController extends Controller
             }
         }
 
+        $data['code'] = $data['ticket_number'];
+        if (!preg_match('/^(?:[A-Za-z]+-)?([0-9]+)$/', $data['ticket_number'] ?? '', $match) || (int)$match[1] < 1) {
+            throw new \InvalidArgumentException('Numero de carte invalide');
+        }
+        $data['ticket_number'] = (int)$match[1];
         return $data;
     }
 

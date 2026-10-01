@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
+use App\Http\Middleware\ScannerSession;
+use Illuminate\Support\Facades\DB;
 use App\Models\Event;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -40,29 +42,8 @@ class AuthController extends Controller
                 $user = User::whereRaw('LOWER(username) = ?', [strtolower($email)])->first();
             }
 
-            // Fallback to environment variables
-            if (!$user) {
-                $envEmail = env('MOBILE_LOGIN_EMAIL');
-                $envPassword = env('MOBILE_LOGIN_PASSWORD');
-                $envFullName = env('MOBILE_LOGIN_FULL_NAME', 'Utilisateur');
-                $envRole = env('MOBILE_LOGIN_ROLE', 'CHECKER');
-
-                if ($envEmail && $envPassword) {
-                    $lookupEmail = $email ?: $username;
-
-                    if ($lookupEmail) {
-                        $emailMatch = strtolower($lookupEmail) === strtolower($envEmail);
-                        $usernameMatch = strtolower($lookupEmail) === strtolower(explode('@', $envEmail)[0]);
-
-                        if (($emailMatch || $usernameMatch) && $password === $envPassword) {
-                            return $this->buildLoginResponse('env-user', $envFullName, $envEmail, $envRole);
-                        }
-                    }
-                }
-            }
-
             // User not found
-            if (!$user) {
+            if (!$user || !$user->is_active) {
                 return response()->json([
                     'ok' => false,
                     'error' => 'Identifiants invalides',
@@ -97,11 +78,10 @@ class AuthController extends Controller
      */
     private function buildLoginResponse($userId, $name, $email, $role)
     {
-        $timestamp = now()->timestamp;
-        $accessToken = "scn-{$timestamp}-{$userId}";
-
-        // Fetch all events (for MVP, all events are linked)
-        $events = Event::all();
+        $accessToken = bin2hex(random_bytes(32));
+        $user = User::findOrFail($userId);
+        DB::table('auth_sessions')->insert(['token_hash' => hash('sha256', $accessToken), 'user_id' => $userId, 'expires_at' => now()->addHours(12), 'created_at' => now()]);
+        $events = ScannerSession::events($user)->get();
         $defaultLocation = env('MOBILE_DEFAULT_LOCATION', 'Lieu non defini');
         $defaultCheckpoint = env('MOBILE_DEFAULT_CHECKPOINT', 'Entree Principale');
 

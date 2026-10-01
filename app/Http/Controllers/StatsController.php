@@ -29,7 +29,8 @@ class StatsController extends Controller
 
             $total = Invitation::where('event_id', $eventId)->count();
             $scanned = $counts->get('SCANNED')?->count ?? 0;
-            $available = $counts->get('NOT_SCANNED')?->count ?? 0;
+            $available = Invitation::where('event_id', $eventId)->where('status', 'NOT_SCANNED')->where('payment_status', 'PAID')->count();
+            $paid = Invitation::where('event_id', $eventId)->where('payment_status', 'PAID')->count();
             $blocked = $counts->get('BLOCKED')?->count ?? 0;
             $cancelled = $counts->get('CANCELLED')?->count ?? 0;
 
@@ -57,6 +58,8 @@ class StatsController extends Controller
                 'ok' => true,
                 'stats' => [
                     'total' => $total,
+                    'paid' => $paid,
+                    'unpaid' => $total - $paid,
                     'scanned' => $scanned,
                     'available' => $available,
                     'blocked' => $blocked,
@@ -88,7 +91,7 @@ class StatsController extends Controller
             $request->validate([
                 'page' => 'nullable|integer|min:1',
                 'perPage' => 'nullable|integer|min:1|max:100',
-                'result' => 'nullable|in:VALID,INVALID,ALREADY_SCANNED,BLOCKED,CANCELLED,ERROR',
+                'result' => 'nullable|in:VALID,INVALID,ALREADY_SCANNED,BLOCKED,CANCELLED,UNPAID,ERROR',
             ]);
 
             // Verify event exists
@@ -177,6 +180,7 @@ class StatsController extends Controller
             'ALREADY_SCANNED' => 'Deja scanne',
             'BLOCKED' => 'Ticket bloque',
             'CANCELLED' => 'Ticket annule',
+            'UNPAID' => 'Ticket non paye',
             'ERROR' => 'Erreur lors du scan',
         ];
 

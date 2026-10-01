@@ -11,6 +11,9 @@ class Invitation extends Model
     protected $table = 'invitations';
 
     protected $fillable = [
+        'payment_status',
+        'paid_at',
+        'paid_by_user_id',
         'event_id',
         'ticket_number',
         'code',
@@ -26,6 +29,7 @@ class Invitation extends Model
     protected $casts = [
         'ticket_number' => 'integer',
         'scanned_at' => 'datetime',
+        'paid_at' => 'datetime',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
     ];

@@ -16,7 +16,7 @@ class EventController extends Controller
     public function index(Request $request)
     {
         try {
-            $events = Event::orderByDesc('created_at')->get();
+            $events = \App\Http\Middleware\ScannerSession::events($request->user())->orderByDesc('created_at')->get();
 
             $eventsData = $events->map(function ($event) {
                 $counts = Invitation::where('event_id', $event->id)
@@ -122,13 +122,12 @@ class EventController extends Controller
             $request->validate([
                 'code' => 'required|string|unique:events,code',
                 'name' => 'required|string',
-                'organizationId' => 'required|integer|exists:organizations,id',
                 'timezone' => 'nullable|string|timezone',
                 'status' => 'nullable|in:DRAFT,LIVE,ENDED,CANCELLED',
             ]);
 
             $event = Event::create([
-                'organization_id' => $request->input('organizationId'),
+                'organization_id' => $request->user()->organization_id,
                 'code' => $request->input('code'),
                 'name' => $request->input('name'),
                 'starts_at' => $request->input('startsAt'),
@@ -137,6 +136,7 @@ class EventController extends Controller
                 'status' => $request->input('status', 'DRAFT'),
             ]);
 
+            DB::table('event_users')->insertOrIgnore(['event_id' => $event->id, 'user_id' => $request->user()->id]);
             return response()->json([
                 'ok' => true,
                 'event' => [

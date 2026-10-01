@@ -17,7 +17,7 @@ class ScanController extends Controller
     {
         try {
             $request->validate([
-                'qrPayload' => 'required|string',
+                'qrPayload' => 'required|string|max:255',
                 'checkpointId' => 'nullable|string',
                 'deviceId' => 'nullable|string',
             ]);
@@ -25,7 +25,7 @@ class ScanController extends Controller
             $qrPayload = trim($request->input('qrPayload'));
             $checkpointId = $request->input('checkpointId');
             $deviceId = $request->input('deviceId');
-            $userId = $request->header('X-User-Id');
+            $userId = $request->user()->id;
 
             // Use transaction with row lock
             $result = DB::transaction(function () use ($eventId, $qrPayload, $userId, $checkpointId, $deviceId) {
@@ -100,6 +100,11 @@ class ScanController extends Controller
                     ];
                 }
 
+                if ($invitation->payment_status !== 'PAID') {
+                    $this->logScan($eventId, $qrPayload, $invitation->id, 'UNPAID', $userId, $checkpointId, $deviceId);
+                    return ['status' => 403, 'ok' => false, 'result' => 'UNPAID', 'message' => 'Ticket non paye. Acces refuse. Veuillez passer a la caisse.', 'ticket' => $this->formatTicket($invitation)];
+                }
+
                 // NOT_SCANNED -> mark as SCANNED
                 if ($status === 'NOT_SCANNED') {
                     $invitation->update([
@@ -149,30 +154,17 @@ class ScanController extends Controller
      */
     private function logScan($eventId, $qrPayload, $invitationId, $result, $userId, $checkpointId = null, $deviceId = null)
     {
-        try {
-            // invitation_id is NOT NULL in migration, skip logging for INVALID scans without invitation
-            if ($invitationId === null) {
-                \Log::info('Scan attempt without invitation', [
-                    'event_id' => $eventId,
-                    'qr_payload' => $qrPayload,
-                    'result' => $result,
-                ]);
-                return;
-            }
-
-            ScanLog::create([
-                'event_id' => $eventId,
-                'invitation_id' => $invitationId,
-                'user_id' => $userId,
-                'qr_payload' => $qrPayload,
-                'result' => $result,
-                'checkpoint_id' => $checkpointId,
-                'device_id' => $deviceId,
-                'device_ip' => request()->ip(),
-            ]);
-        } catch (\Exception $e) {
-            \Log::warning('Failed to log scan', ['error' => $e->getMessage()]);
-        }
+        // An audit failure must roll back admission instead of authorizing silently.
+        ScanLog::create([
+            'event_id' => $eventId,
+            'invitation_id' => $invitationId,
+            'user_id' => $userId,
+            'qr_payload' => $qrPayload,
+            'result' => $result,
+            'checkpoint_id' => $checkpointId,
+            'device_id' => $deviceId,
+            'device_ip' => request()->ip(),
+        ]);
     }
 
     /**
@@ -191,6 +183,7 @@ class ScanController extends Controller
             'guestName' => $invitation->guest_name,
             'phone' => $invitation->guest_phone,
             'status' => $invitation->status,
+            'paymentStatus' => $invitation->payment_status,
             'scannedAt' => $invitation->scanned_at?->toIso8601String(),
         ];
     }
